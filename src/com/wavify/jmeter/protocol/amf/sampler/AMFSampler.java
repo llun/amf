@@ -4,13 +4,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 
 import javax.net.ssl.SSLContext;
 
-import org.apache.jmeter.config.Argument;
 import org.apache.jmeter.protocol.http.control.Cookie;
 import org.apache.jmeter.protocol.http.control.CookieManager;
 import org.apache.jmeter.samplers.AbstractSampler;
@@ -18,16 +19,22 @@ import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.Interruptible;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.testelement.TestElement;
+import org.apache.jmeter.testelement.property.AbstractProperty;
 import org.apache.jmeter.testelement.property.CollectionProperty;
+import org.apache.jmeter.testelement.property.FloatProperty;
+import org.apache.jmeter.testelement.property.IntegerProperty;
 import org.apache.jmeter.testelement.property.JMeterProperty;
+import org.apache.jmeter.testelement.property.NullProperty;
 import org.apache.jmeter.testelement.property.ObjectProperty;
 import org.apache.jmeter.testelement.property.PropertyIterator;
+import org.apache.jmeter.testelement.property.StringProperty;
 import org.apache.jmeter.util.JsseSSLManager;
 import org.apache.jmeter.util.SSLManager;
 
 import flex.messaging.io.amf.client.AMFConnection;
 import flex.messaging.io.amf.client.exceptions.ClientStatusException;
 import flex.messaging.io.amf.client.exceptions.ServerStatusException;
+import flex.messaging.messages.AcknowledgeMessage;
 import flex.messaging.messages.CommandMessage;
 import flex.messaging.messages.RemotingMessage;
 
@@ -56,9 +63,29 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
     setProperty(METHOD_PROP, method);
   }
 
-  public void setArguments(List<String> arguments) {
-    CollectionProperty property = new CollectionProperty();
-    property.setCollection(arguments);
+  private CollectionProperty convertCollectionArgument(Collection<?> collection) {
+    CollectionProperty properties = new CollectionProperty();
+    properties.setName("COLLECTION");
+    for (Object object : collection) {
+      if (object == null) {
+        properties.addProperty(new NullProperty());
+      } else if (object instanceof Integer) {
+        properties.addProperty(new IntegerProperty("INT", (Integer) object));
+      } else if (object instanceof Float) {
+        properties.addProperty(new FloatProperty("FLOAT", (Float) object));
+      } else if (object instanceof String) {
+        properties.addProperty(new StringProperty("STRING", (String) object));
+      } else if (object instanceof Collection) {
+        properties.addProperty(this
+            .convertCollectionArgument((Collection<?>) object));
+      }
+    }
+    return properties;
+  }
+
+  public void setArguments(List<?> arguments) {
+    CollectionProperty property = convertCollectionArgument(arguments);
+    property.setName(ARGUMENT_PROP);
 
     setProperty(property);
   }
@@ -79,21 +106,58 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
     return getPropertyAsString(METHOD_PROP);
   }
 
-  public List<String> getArguments() {
+  public List<Object> getArguments() {
     JMeterProperty prop = getProperty(ARGUMENT_PROP);
-    ArrayList<String> arguments = new ArrayList<String>();
-    
+    ArrayList<Object> arguments = new ArrayList<Object>();
+
     if (prop instanceof CollectionProperty) {
       CollectionProperty collection = (CollectionProperty) prop;
-      
+
       PropertyIterator iterator = collection.iterator();
       while (iterator.hasNext()) {
         JMeterProperty property = iterator.next();
-        Argument argument = (Argument) property.getObjectValue();
-        arguments.add(argument.getValue());
+
+        if (property instanceof NullProperty) {
+          arguments.add(null);
+        } else if (property instanceof IntegerProperty) {
+          arguments.add(property.getIntValue());
+        } else if (property instanceof FloatProperty) {
+          arguments.add(property.getFloatValue());
+        } else if (property instanceof StringProperty) {
+          arguments.add(property.getStringValue());
+        } else if (property instanceof CollectionProperty) {
+          arguments.add(convertCollectionValue((CollectionProperty) property));
+        } else {
+          arguments.add(property.getObjectValue());
+        }
       }
     }
     return arguments;
+  }
+
+  private Collection<?> convertCollectionValue(CollectionProperty collection) {
+    Collection<?> values = (Collection<?>) collection.getObjectValue();
+    Collection<Object> items = new ArrayList<Object>();
+    Iterator<?> iterator = values.iterator();
+    while (iterator.hasNext()) {
+      Object obj = iterator.next();
+      if (obj instanceof JMeterProperty) {
+        AbstractProperty property = (AbstractProperty) obj;
+        if (property instanceof NullProperty) {
+          items.add(null);
+        } else if (property instanceof StringProperty) {
+          items.add(property.getStringValue());
+        } else if (property instanceof ObjectProperty) {
+          items.add(property.getObjectValue());
+        } else if (property instanceof IntegerProperty) {
+          items.add(property.getIntValue());
+        } else if (property instanceof FloatProperty) {
+          items.add(property.getFloatValue());
+        }
+      }
+    }
+
+    return items;
   }
 
   public CookieManager getCookieManager() {
@@ -144,8 +208,8 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
     return connection.call(null, new Object[] { message });
   }
 
-  SampleResult process() {
-    SampleResult result = new SampleResult();
+  AMFSamplerResult process() {
+    AMFSamplerResult result = new AMFSamplerResult();
 
     String address = getAddress();
     String service = getService();
@@ -194,17 +258,27 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
       connection.connect(address);
 
       ping(connection);
-      
-      List<String> arguments = getArguments();
-      Object object = call(connection, service, method, arguments.toArray());
-      result.setResponseData(object.toString().getBytes());
-      result.setResponseMessage(object.toString());
+
+      List<Object> arguments = getArguments();
+      AcknowledgeMessage message = (AcknowledgeMessage) call(connection,
+          service, method, arguments.toArray());
+      result.setResult(message.getBody());
+      result.setMessageID(message.getMessageId());
+      result.setResponseHeaders(message.getHeaders().toString());
+      result.setResponseData(message.toString().getBytes());
+      result.setResponseMessage(message.toString());
 
       result.setSuccessful(true);
     } catch (Exception e) {
       ByteArrayOutputStream baos = new ByteArrayOutputStream();
       PrintStream ps = new PrintStream(baos);
       e.printStackTrace(ps);
+
+      if (e instanceof ServerStatusException) {
+        result.setErrorMsg(((ServerStatusException) e).getData().toString());
+      } else {
+        result.setErrorMsg(e.getMessage());
+      }
 
       result.setSuccessful(false);
     }

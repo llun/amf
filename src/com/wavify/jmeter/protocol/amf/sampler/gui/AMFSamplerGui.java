@@ -14,7 +14,7 @@ import org.apache.jmeter.testelement.property.CollectionProperty;
 import org.apache.jmeter.testelement.property.JMeterProperty;
 import org.apache.jmeter.testelement.property.PropertyIterator;
 
-import com.throughwave.jmeter.protocol.amf.sampler.AMFSampler;
+import com.wavify.jmeter.protocol.amf.sampler.AMFSampler;
 
 public class AMFSamplerGui extends AbstractSamplerGui {
 
