@@ -78,6 +78,8 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
       } else if (object instanceof Collection) {
         properties.addProperty(this
             .convertCollectionArgument((Collection<?>) object));
+      } else {
+    	properties.addProperty(new ObjectProperty("Object", object));
       }
     }
     return properties;
@@ -116,7 +118,7 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
       PropertyIterator iterator = collection.iterator();
       while (iterator.hasNext()) {
         JMeterProperty property = iterator.next();
-
+        
         if (property instanceof NullProperty) {
           arguments.add(null);
         } else if (property instanceof IntegerProperty) {
@@ -214,6 +216,8 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
     String address = getAddress();
     String service = getService();
     String method = getMethod();
+    
+    result.setContentType(service + ": " + method);
 
     if (connection != null) {
       connection.close();
@@ -279,6 +283,9 @@ public class AMFSampler extends AbstractSampler implements Interruptible {
       } else {
         result.setErrorMsg(e.getMessage());
       }
+      
+      result.setResult(result.getErrorMsg());
+      result.setResponseMessage(result.getErrorMsg());
 
       result.setSuccessful(false);
     }
